@@ -576,11 +576,12 @@ impl McpServer {
             }
 
             debug!("Received: {}", line);
-            let response = self.handle_request(&line);
-            let response_json = serde_json::to_string(&response)? + "\n";
-            debug!("Sending: {}", response_json.trim());
-            stdout.write_all(response_json.as_bytes())?;
-            stdout.flush()?;
+            if let Some(response) = self.handle_request(&line) {
+                let response_json = serde_json::to_string(&response)? + "\n";
+                debug!("Sending: {}", response_json.trim());
+                stdout.write_all(response_json.as_bytes())?;
+                stdout.flush()?;
+            }
         }
 
         Ok(())
@@ -598,11 +599,12 @@ impl McpServer {
             }
 
             debug!("Received: {}", line);
-            let response = self.handle_request(&line);
-            let response_json = serde_json::to_string(&response)? + "\n";
-            debug!("Sending: {}", response_json.trim());
-            stdout.write_all(response_json.as_bytes()).await?;
-            stdout.flush().await?;
+            if let Some(response) = self.handle_request(&line) {
+                let response_json = serde_json::to_string(&response)? + "\n";
+                debug!("Sending: {}", response_json.trim());
+                stdout.write_all(response_json.as_bytes()).await?;
+                stdout.flush().await?;
+            }
 
             // In one-shot mode, exit after first request (after initialize)
             if !self.config.daemon_mode && self.initialized {
@@ -613,25 +615,33 @@ impl McpServer {
         Ok(())
     }
 
-    fn handle_request(&mut self, line: &str) -> JsonRpcResponse {
+    fn handle_request(&mut self, line: &str) -> Option<JsonRpcResponse> {
         // Parse request
         let request: JsonRpcRequest = match serde_json::from_str(line) {
             Ok(req) => req,
             Err(e) => {
                 error!("Failed to parse request: {}", e);
-                return JsonRpcResponse {
+                return Some(JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     result: None,
                     error: Some(JsonRpcError::parse_error()),
                     id: None,
-                };
+                });
             }
         };
+
+        // If it's a notification, do not reply.
+        if request.id.is_none() {
+            debug!("Received notification: {}", request.method);
+            // We could handle the notification here if needed, but for unknown
+            // notifications, ignoring them is the correct behavior.
+            return None;
+        }
 
         // Dispatch to method handler
         let result = self.dispatch_method(&request);
 
-        match result {
+        let response = match result {
             Ok(result) => JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 result: Some(result),
@@ -644,7 +654,8 @@ impl McpServer {
                 error: Some(error),
                 id: request.id.clone(),
             },
-        }
+        };
+        Some(response)
     }
 
     fn dispatch_method(
@@ -653,6 +664,7 @@ impl McpServer {
     ) -> Result<serde_json::Value, JsonRpcError> {
         match request.method.as_str() {
             "initialize" => self.handle_initialize(request),
+            "ping" => Ok(serde_json::json!(null)),
             "resources/list" => self.handle_resources_list(request),
             "resources/read" => self.handle_resources_read(request),
             "tools/list" => self.handle_tools_list(request),
