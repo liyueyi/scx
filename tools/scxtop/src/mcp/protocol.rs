@@ -22,6 +22,7 @@ pub struct JsonRpcResponse {
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<JsonRpcError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<Value>,
 }
 
